@@ -1,0 +1,389 @@
+---
+title: "A Note on Correlation in Longitudinal Data"
+author: "Jonathon Vallejo"
+date: "February 1, 2016"
+output: html_document
+---
+  
+### Estimating the variance over multiple time points.
+
+One of the central problems in longitudinal data analysis is handling correlated data. A common problem discussed in introductory regression courses is that ignoring positive correlation can lead to underestimating the variance in the data. Let $Y_{ij}$ be the $j^{th}$ repeated measure on the $i^{th}$ subject, where $i = 1,...,N$ and $j = 1,...,n$. For simplicity, suppose
+
+$$
+\begin{align}
+Y_i \sim N(\mathbf{0}, \Sigma)
+\end{align}
+$$
+where $\Sigma$ is covariance matrix assuming positive correlation among all $j,j^{'}$ repeated measures. Furthermore, assume that the variance is the same for all time points, so that 
+
+$$
+\Sigma_{jj} = \sigma^2,
+$$
+
+for $j = 1,...,n$. Here, we treat $\sigma^2$ as the "overall variance" which we attempt to estimate. For example, one might have
+
+$$
+\begin{align}
+\Sigma_{ij} = \rho^{|i-j|},
+\end{align}
+$$
+a covariance matrix indicating an AR(1) structure with variance 1 at all time points. If one were to estimate the variance of $Y_{i1},...,Y_{in}$ without considering the correlation, one would underestimate the variance. This is because the usual estimate for variance
+$$
+\begin{align}
+\hat{\sigma}^2 &= \frac{1}{n} \sum_{j=1}^{n} (Y_{ij} - \bar{Y}_i)^2 \\
+&= \frac{1}{n} \sum_{j=1}^{n} (Y_{ij}^2 - 2Y_{ij}\bar{Y}_i + \bar{Y}_i^2)
+\end{align}
+$$
+In the case of independence, $2Y_{ij}\bar{Y}_i$ is 0 since $E(Y_{ij}Y_{ij^{'}}) = 0$. However, this term is positive under correlation, resulting in a smaller estimate for the variance. Similarly, the variance of the mean $\bar{Y}_i$, will also be underestimated, since its true variance
+$$
+\begin{align}
+Var(\bar{Y}_i) &= \frac{1}{n} \mathbf{1^{'}} \Sigma \mathbf{1} \geq \frac{\sigma^2}{n},
+\end{align}
+$$
+since $\Sigma$ contains non-negative entries for all of the entries where $j \neq j^{'}$. Equality is achieved when the observations are independent. Note that this calculation assumes that *the mean is the same at all time points*, which may not be the case. If this is not true, $\bar{Y}_i$ is meaningless.
+
+Suppose one observes 10 realizations of $Y_i$ with mean $\mu = (0, 0, 0, 0 ,0)^{'}$ and covariance matrix 
+$$
+\begin{align}
+\Sigma = \left[ \begin{array}{ccccc}
+1 & 0.9 & 0.9 & 0.9 & 0.9 \\
+0.9 & 1 & 0.9 & 0.9 & 0.9 \\
+0.9 & 0.9 & 1 & 0.9 & 0.9 \\
+0.9 & 0.9 & 0.9 & 1 & 0.9 \\
+0.9 & 0.9 & 0.9 & 0.9 & 1 \\
+\end{array} \right]
+\end{align}
+$$
+
+We can see that these observations exhibit less variability over time than uncorrelated observations. Consequently, the means of these observations are more variable.
+
+```{r, message = FALSE, warning = FALSE}
+library(dplyr)
+library(MASS)
+
+rho <- 0.9
+n <- 5 # number of time points
+mu <- rep(0, n)
+sigma <- matrix(rho, n, n)
+diag(sigma) <- 1
+
+cor_df <- data.frame(Cor = rep('Correlated', 50),
+                     Iter = factor(rep(1:10, each = 5)),
+                     time = rep(1:5, 10)) %>%
+  group_by(Iter) %>%
+  mutate(val = mvrnorm(1, mu, sigma)) %>%
+  mutate(SampleMean = mean(val)) %>%
+  ungroup()
+
+uncor_df <- data.frame(Cor = rep('Uncorrelated', 50),
+                       Iter = factor(rep(1:10, each = 5)),
+                       time = rep(1:5, 10)) %>%
+  group_by(Iter) %>%
+  mutate(val = rnorm(5)) %>%
+  mutate(SampleMean = mean(val)) %>%
+  ungroup()
+
+plot_df <- rbind(cor_df, uncor_df)
+
+library(ggplot2)
+ggplot(plot_df, aes(time, val, group = Iter, colour = Iter)) +
+  geom_point() + geom_line() + facet_wrap(~ Cor)
+
+ggplot(plot_df, aes(time, SampleMean, group = Iter, colour = Iter)) +
+  geom_point() + geom_line() + facet_wrap(~ Cor)
+```
+
+To summarize
+
+* When one estimates the variance of observations which are correlated over time by assuming they are independent, one underestimates the variance.
+* As a result, one also underestimates the variance of the mean of these observations (if the mean is constant over time).
+
+It's important to note that the variance we are estimating is for **the overall variance of all observations over time**, rather than at any one particular time point. 
+
+### Estimating the variance at a single time point
+
+In the last section, we focused on making inference about the variance of a single set of correlated observations $Y_i = (Y_{i1},...,Y_{in})$ over time. Because $Y_i$ has just one point at each observed time, one cannot estimate the variance at each time point. However, in longitudinal data, we have $N$ observations of the $Y_i$, enabling us to estimate the variance at each time point, $\sigma_j^2$. In fact, we know that the marginal distribution of $Y_{\cdot j}$ is
+
+$$
+\begin{align}
+Y_{\cdot j} \sim N(\mu_j, \sigma_j^2),
+\end{align}
+$$
+since the $Y_i$ have a multivariate normal distribution. Suppose one observes 100 subjects with mean $\mu$ and covariance matrix $\Sigma$, as given above. We calculate the mean and variance for the first time point below.
+
+```{r, message = FALSE, warning = FALSE}
+nIter <- 10000
+N <- 100
+samp_mean <- numeric(nIter)
+samp_var <- numeric(nIter)
+
+for (i in 1:nIter)
+{
+  xs <- mvrnorm(N, mu, sigma)
+  samp_mean[i] <- mean(xs[,1]) # mean of first time point
+  samp_var[i] <- var(xs[,1]) # variance of first time point
+}
+var(samp_mean)
+hist(samp_var, freq = FALSE, xlab = 'Sample Variances computed at time point 1', main = expression('Histogram of' ~ hat(var)(x[1])))
+
+```
+
+As expected, the sample variance is unbiased with mean 1 and the estimated variance of the sample mean is close to $1/100 = 0.01$.
+
+Again, we can see the consequence of estimating these variances by assuming all observations are uncorrelated and using all of the observations across time to estimate the variance.
+
+
+```{r, message = FALSE, warning = FALSE}
+nIter <- 10000
+samp_mean <- numeric(nIter)
+samp_var <- numeric(nIter)
+
+for (i in 1:nIter)
+{
+  xs <- mvrnorm(N, mu, sigma)
+  samp_mean[i] <- mean(c(xs)) # mean of observations combined over time
+  samp_var[i] <- var(c(xs)) # variance of these observations
+}
+var(samp_mean)
+
+```
+
+Here, the variance of the sample mean should be $\sigma^2 / (Nn) = 0.002$. Instead, the variance of the mean is much higher than this, a result of what is commonly referred to as the variance inflation factor. In his classic book on longitudinal data, Diggle[^1] shows that
+$$
+\begin{align}
+var(\bar{Y}) = \frac{\sigma^2}{Nn} [1 + (n - 1)\rho],
+\end{align}
+$$
+when one has $N$ longitudinal observations at $n$ time points. Here, $\rho$ is the correlation between two time points, which is assumed to be equal among all time points where $j \neq j^{'}$. We see that this is the value which was estimated above.
+```{r}
+1 / (N * n) * (1 + (n - 1) * rho)
+```
+
+Coincidentally, our estimate of the overall variance is the same as before.
+
+```{r}
+hist(samp_var, freq = FALSE, 
+     xlab = 'Sample variance computed over all time points, subjects', 
+     main = expression('Histogram of' ~ hat(var)(x)))
+```
+
+This is simply an artifact of the model, and the fact that we have chosen equal variances at all time points. This estimate would be meaningless if in fact the variances were not equal at all time points.
+
+The "underestimate" of variance can be seen if we were to take the variance of each subject individually over time, ignoring the autocorrelation. This is the case which mirrors regression, as in regression we only observed one set of correlated errors.
+
+```{r}
+nIter <- 10000
+samp_vars <- matrix(NA, 100, nIter)
+
+for (i in 1:nIter)
+{
+  xs <- mvrnorm(100, mu, sigma)
+  samp_vars[,i] <- apply(xs, 1, var) # variance for each subject
+}
+hist(c(samp_vars), freq = FALSE,  
+     xlab = 'Sample variance computed over all time points for each subject', 
+     main = expression('Histogram of' ~ hat(var)(x)))
+```
+
+As seen above, these estimates of the variance (1 in this case), are severely biased below the true value.
+
+### Application to meta-analysis
+
+Repeated measures are common in clinical trials. One generally has at least two time points, the time of baseline and the time of the endpoint of interest. One often observes positive correlation between these measurements, as healthy patients tend to respond more positively to treatments, and sicker patients tend to respond less frequently to treatments. In this case the correlation, $\rho$, is the *within-patient* correlation. That is, a patients response at multiple endpoints are correlated with each other. This correlation is generally assumed to be positive.
+
+Consider a simple model for the responses of patients in a clinical trial with three time points. For patient $i$, consider the mdoel
+$$
+\begin{align}
+Y_i = X\beta + \epsilon_i,
+\end{align}
+$$
+where $X$ is a design matrix containing the three treatment times, and $\epsilon_i \sim N(\mathbf{0}, \Sigma)$, where $\Sigma$ has the same structure as above, but of dimension three. We generate data of this kind below for 10,000 patients.
+
+```{r}
+library(dplyr)
+
+nSub <- 10000
+
+mu <- rep(0, 3)
+sigma <- matrix(rho, 3, 3)
+diag(sigma) <- 1
+
+beta0 <- 0
+beta1 <- -1
+
+times <- c(0, 2, 4)
+nTime <- length(times)
+
+subj_df <- expand.grid(id = 1:nSub,
+                       time = times)
+
+trial_df <- subj_df %>%
+  mutate(beta0 = beta0) %>%
+  mutate(beta1 = beta1) %>%
+  group_by(id) %>%
+  mutate(error = mvrnorm(1, mu, sigma)) %>%
+  ungroup() %>%
+  mutate(effect = beta0 + beta1 * time + error)
+
+ggplot(trial_df, aes(time, effect, group = id)) + 
+  geom_line() + geom_point()
+```
+
+We can see that the estimate of the mean and variance at each time point is unbiased.
+
+```{r}
+trial_df %>%
+  group_by(time) %>%
+  summarise(SampleMean = mean(effect),
+            SampleVar = var(effect))
+```
+
+In fact, the table above is exactly the kind of table one might use during a meta-analysis of clinical trials. Notice that the correlation is not reported, which is typical in clinical trials. Though this does not bias the current estimates, it will bias estimates when one calculates change from basline.
+
+This issue is discussed in more detail in the NICE docuements[^2]. Here, $i$ is the study index, and $k$ is the treatment index.
+
+> However, in practice many studies fail to report an adequate measure of the uncertainty for the before-after difference in outcome and instead report the mean and variance, $y_{ik}^{(b)}$ and $V_{ik}^{(b)}$, (or other measure of uncertainty) at baseline (before), and at follow-up times (after), $y_{ik}^{(a)}$ and $V_{ik}^{(a)}$, separately. While the mean change from baseline can be easily calculated as 
+$$
+\begin{align}
+y_{ik}^{\Delta} = y_{ik}^{(b)} - y_{ik}^{(a)}
+\end{align}
+$$
+To calculate $V_{ik}^{\Delta}$ for such trials, information on the within-patient correlation $\rho$ is required since
+$$
+\begin{align}
+V_{ik}^{\Delta} = V_{ik}^{(b)} + V_{ik}^{(a)} - 2 \rho \sqrt{V_{ik}^{(b)} V_{ik}^{(a)}}
+\end{align}
+$$
+Information on the correlation $\rho$ is seldom available. It may be possible to obtain information from a review of similar trials using the same outcome measures, or else a reasonable value for $\rho$, often 0.5 (which is considered conservative) or 0.7, can be used alongside sensitivity analyses.
+
+We can see that simply adding the variances, would lead to an overestimate of the variance of the mean change from baseline if one ignores the positive within-patient correlation.
+```{r}
+diff_df <- trial_df %>%
+  arrange(id, time) %>%
+  group_by(id) %>%
+  mutate(CFB = effect - first(effect)) %>%
+  ungroup() %>%
+  filter(time > 0)
+
+ggplot(diff_df, aes(time, CFB, group = id)) +
+  geom_line() + geom_point()
+
+diff_df %>%
+  group_by(time) %>%
+  summarise(SampleMean = mean(CFB),
+            SampleVar = var(CFB))
+```
+
+As demonstrated above, the variance of the change from baseline at each time point is well below 2, which would be the estimate if we were to add the variance at baseline and the variance at each time point. This procedure of estimation is commonly used in meta-analysis. 
+
+#### Distribution of the change from baseline
+
+In a paper introducing fractional polynomial methods for longitudinal meta-analysis, Jansen[^3] notes that there is within-trial correlation in the change from baseline (CFB): 
+
+> The CFB in pain at each time point are correlated over time. Unfortunately, this within-trial correlation was not reported for the included studies. As such, we performed sensitivity analyses assuming different values for the     correlation: 0, 0.5, 0.9....Estimates for $\sigma_{ijk}^2$ (variance of CFB) were obtained from the reported standard errors as presented in Table I and adjusted by dividing these variance estimates by $1-\rho^2$.
+
+This "within-trial" correlation is the same as the aforementioned "within-patient" correlation. Though Jansen is correct in saying that one generally underestimates the variance of correlated observations, as shown above, this occurs only when one **calculates an overall variance by pooling observations across time.** Thus, it is not necessarily the case that positive correlation will result in underestimating variability in this setting, as this is **not** how these variances are calculated.
+
+In fact, the CFB measurements *are* correlated, but the impact on estimation of variance is slightly more subtle. To see exactly what the correlation for the CFB might be, first note that the mean response is distributed as
+
+$$
+\begin{align}
+\bar{Y} \sim N \left(\mu, \Omega = \frac{1}{N} \Sigma \right),
+\end{align}
+$$
+
+so that the mean effect is still correlated across time. The mean change from baseline is a linear transformation of the mean effect. For example, consider the case where $n = 3$. Let
+
+$$
+\begin{align}
+A = \left[ \begin{array}{cc}
+-1 & -1 \\
+1 & 0 \\
+0 & 1 \\ \end{array} \right].
+\end{align} 
+$$
+
+Then the mean change from baseline $\bar{CFB}$ is
+
+$$
+\begin{align}
+\bar{CFB} = A^{'} \bar{Y},
+\end{align}
+$$
+
+so that
+
+$$
+\begin{align}
+\bar{CFB} \sim N(A^{'} \mu, A^{'} \Omega A).
+\end{align}
+$$
+
+If
+
+$$
+\Omega = \left[\begin{array}{ccc}
+1 & \rho & \rho \\
+\rho & 1 & \rho \\
+\rho & \rho & 1 \\ \end{array} \right],
+$$
+
+one can show that
+
+$$
+\begin{align}
+A^{'} \Omega A &= \left[\begin{array}{cc}
+2 - 2 \rho & 1 - \rho \\
+1 - \rho & 2 - 2 \rho \end{array} \right]. \\
+&= (2 - 2 \rho) \left[\begin{array}{cc}
+1 & 0.5\\
+0.5 & 1 \end{array} \right].
+\end{align}
+$$
+
+Thus, regardless of the strength of correlation, if the correlation is the same among all pairs of time points, the correlation among the time points of the CFB measurements is 0.5. This case is identical to that of observing $>2$ arms in a clinical trial, and thus knowing that the treatment effects relative to baseline are correlated. In this case, one assumes that the treatments effects are equally correlated with each other, resulting in a correlation of 0.5. 
+
+Notice that while this correlation does **not** impact the estimates of the marginal distributions of $\bar{CFB}_j$, it **does** impact the conditional distributions $\bar{CFB}_j | \bar{CFB}_{j^{'} \neq j}$. One can write this distribution as
+
+$$
+\begin{align}
+\bar{CFB}_j | \bar{CFB}_{j^{'} \neq j} \sim N \left( (\theta_j - \theta_i) + \frac{1}{n-1} \sum_{j = 1}^{n-1} \left[\bar{CFB}_j - (\theta_j - \theta_1) \right], \frac{n}{2(n-1)} \sigma^2 \right),
+\end{align}
+$$
+
+a relation which is commonly used for specifying random effects for multi-arm trials. When $n > 2$, the variance of the conditional distribution is at most $3 \sigma^2 / 4$, suggesting again that using the marginal variances would overestimate the variance of the conditional distribution.
+
+One might have a different structure for $\Omega$. For instance, suppose $\Omega$ has an AR(1) structure, so that
+
+$$
+\Omega = \left[\begin{array}{ccc}
+1 & \rho & \rho^2 \\
+\rho & 1 & \rho \\
+\rho^2 & \rho & 1 \\ \end{array} \right].
+$$
+
+Then
+
+$$
+A^{'} \Omega A = \left[\begin{array}{cc}
+2 - 2 \rho & 1 - \rho^2 \\
+1 - \rho^2 & 2 - 2 \rho^2 \end{array} \right].
+$$
+
+Interestingly, one can see that a different adjustment must be made for the variance at time point three than time point two. 
+
+Thus, the general estimates for $var(CFB)_j$ typically *overestimate* the variance at any given time point.
+
+### Conclusions
+
+* Because an estimate of within-patient correlation is not available, one generally overestimates the variance of $\bar{CFB}_j$, since this is usually calculated by summing $Var(\bar{Y}_1) + Var(\bar{Y}_j)$.
+
+* The estimates $\bar{CFB}_j$ are correlated across time. This correlation suggests that using the marginal estimates of the variances of $\bar{CFB}_j$ overestimates the conditional variances of $\bar{CFB}_j | \bar{CFB}_{j^{'} \neq j}$.
+
+The first point yields overestimation of the marginal variance when ignoring correlation, while the second point implies one may overestimate the conditional variance when using the marginal variance estimate. Some simulations may help to understand this phenomonen better.
+
+[^1]: Diggle, Peter, et al. Analysis of longitudinal data. Oxford University Press, 2002. p. 30
+
+[^2]: Dias, Sofia, et al. "NICE DSU Technical Support Document 2: a generalised linear modelling framework for pairwise and network meta-analysis of randomised controlled trials." National Institute for Health and Clinical Excellence, London, UK (2011). p. 26.
+
+[^3]: Jansen, J. P., M. C. Vieira, and S. Cope. "Network meta-nalysis of longitudinal data using fractional polynomials." Statistics in medicine 34.15 (2015): 2294-2311. pp. 5-9.
