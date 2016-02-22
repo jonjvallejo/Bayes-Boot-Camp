@@ -1,0 +1,237 @@
+---
+title: "Measurement Error"
+author: "Jonathon Vallejo"
+date: "February 1, 2016"
+output: html_document
+---
+
+
+### Estimating a Bivariate Linear Relationship
+
+Consider $n$ pairs of measurements ${y_{1i}, y_{2i}}$, viewed as independent, noisy observations of their unobserved true values ${\xi_{1i}, \xi_{2i}}$
+
+$$
+\begin{align}
+y_{1i} &= \xi_{1i} + u_{1i} \\
+y_{2i} &= \xi_{2i} + u_{2i} 
+\end{align}
+$$
+
+$i = 1,...,n$. Assume further that these means are linearly related, 
+
+$$
+\begin{align}
+\xi_{2i} &= \alpha + \beta \xi_{1i},
+\end{align}
+$$
+
+and that the random variables are normally distributed so that
+
+$$
+\begin{align}
+\xi_{1i} &\sim N(\mu_1, \tau^2) \\
+u_{1i} &\sim N(0, \sigma_1^2) \\
+u_{2i} &\sim N(0, \sigma_2^2).
+\end{align}
+$$
+
+Then the sampling distribution of ${y_{1i}, y_{2i}}$ is normal with mean
+
+$$
+\mu = (\mu_1, \alpha + \beta \mu_1)
+$$
+
+and covariance matrix
+
+$$
+\Sigma = \left( \begin{array}{cc} \tau^2 + \sigma_1^2 & \beta \tau^2 \\
+\beta \tau^2 & \beta^2 \tau^2 + \sigma_2^2 \end{array} \right)
+$$
+Our goal is to find an estimate for $\beta$, and possibly $\alpha$.
+
+One has many options in estimating this relationship.
+
+* Ordinary Least Squares:
+    + Scale invariant
+    + Not invariant to interchange of coordinates
+    + Identifiable by assuming $\sigma_Y$ is 0.
+
+* Orthogonal Regression
+    + Not scale invariant
+    + Invariant to interchange of coordinates
+    + Identifiable by assuming $\sigma_Y / \sigma_X = 1$
+
+* Geometric Mean of OLS Estimates
+    + Scale invariant
+    + Invariant to interchange of coordinates
+    + Identifiable by assuming $\sigma_X, \sigma_Y = 0$ for OLS fits. Depends on ratio of sample standard errors but **not** on sample correlation! Depends also on $sign(S_{XY})$.
+    
+* Regression depending only on sample correlation and ratio of sample standard deviations.
+    + Scale invariant
+    + Invariant to interchange of coordinates
+    + Not identifiable.
+    
+Leonard is interested in the fourth kind of regression, and wonders how much a Bayesian approach can solve the problem of nonidentifiability. His main goal is to find out what the regression estimate and its confidence interval is, provided one specifies the *least* informative prior possible.
+    
+```{r}
+x <- rnorm(100)
+y <- x + rnorm(100, 0, 0.2)
+
+# rescale y
+y2 <- 10 * y 
+
+ols_fit1 <- lm(y ~ x)
+ols_fit2 <- lm(y2 ~ x)
+ols_fit3 <- lm(x ~ y)
+
+ols_df <- data.frame(Coefs1 = ols_fit1$coefficients,
+                     Coefs2 = ols_fit2$coefficients,
+                     Coefs3 = ols_fit3$coefficients)
+                     
+ols_df
+```
+
+If OLS were invariant to interchange of coordinates, we would have $\hat{\beta}_1 = 1 / \hat{\beta}_3$
+
+```{r}
+1 / ols_df$Coefs1[2]
+ols_df$Coefs3[2]
+```
+
+We can see that the orthogonal regression estimate is not scale invariant.
+
+```{r}
+library(pracma)
+
+tls_fit1 <- odregress(x, y)
+tls_fit2 <- odregress(x, y2)
+tls_fit3 <- odregress(y, x)
+
+tls_df <- data.frame(Coefs1 = tls_fit1$coeff,
+                     Coefs2 = tls_fit2$coeff,
+                     Coefs3 = tls_fit3$coeff)
+                     
+tls_df
+```
+   
+But it is invariant to interchange of coordinates (`odregress` returns the coefficients as slope, then intercept, as opposed to the usual intercept, than slope in `lm`).
+
+```{r}
+1 / tls_df$Coefs1[1]
+tls_df$Coefs3[1]
+```
+Note that the variance parameters must be positive, so that
+
+$$
+\begin{align}
+\tau^2 &= \frac{1}{\beta} \Sigma_{12} \geq 0 \\
+\sigma_1^2 &= \Sigma_{11} - \frac{1}{\beta} \Sigma_{12} \geq 0 \\
+\sigma_2^2 &= \Sigma_{22} - \beta \Sigma_{12} \geq 0,
+\end{align}
+$$
+
+which modifies the domain of $\Sigma$ given $\beta$.
+
+#### Reparameterizing the model
+
+Denote the sample correlation coefficient as $r = S_{12} / (S_{11} S_{22})^{1/2}$ and the ratio of standard deviations as $l = (S_{22} / S_{11})^{1/2}$. Samuelson (1942)[^1] proposed that in addition to scale invariance and invariance to interchange of coordinates, estimation in bivariate linear relationships should also only depend on $r$ and $l$. Leonard[^2] proposes an inverse-Wishart prior for the covariance matrix $\Sigma$ of the form
+
+$$
+\Sigma \sim IW(\Psi_0(\beta), \nu_0)
+$$
+
+where
+
+$$
+\Psi_0(\beta) = \nu_0 \kappa_0^2 \left( \begin{array}{cc} \beta^2 & \rho_0 \beta \\ 
+\rho_0 \beta & 1 \end{array} \right)
+$$
+
+Note that this implicitly assumes that $\beta = \Sigma_{22} / \Sigma_{11}$, 
+
+$$
+\begin{align}
+\Sigma &= \left( \begin{array}{cc} \Sigma_{11} & \rho \sigma_{11} \sigma_{12} \\ 
+\rho \sigma_{11} \sigma_{12} & \Sigma_{12} \end{array} \right) \\
+&= \Sigma_{11} \left( \begin{array}{cc} 1 & \rho \beta \\ 
+\rho \beta & \beta^2 \end{array} \right),
+\end{align}
+$$
+
+which has inverse
+
+$$
+\Sigma^{-1} = \frac{1}{\beta^2 (1-\rho^2) \Sigma_{11}} \left( \begin{array}{cc} \beta^2 & -\rho \beta \\ 
+-\rho \beta& 1 \end{array} \right).
+$$
+
+Notice that this is simply the **mean** of the distribution of $\Sigma$, and does not prevent $\beta \neq \Sigma_22 / \Sigma_{11}$ in practice.
+
+#### Prior for $\beta$
+
+In order to define a prior for the slope, Leonard defines $\tilde{\beta} = \beta / l$. This creates a slope which is standard across scale changes, making it easy to select a single prior for all possible cases. Leonard seeks a prior which is invariant to change of coordinates.
+
+Suppose we have a set of coordinates in the plane, $(x,y)$. Given an angle $\phi$, we can rotate these coordinates using the following formula:
+
+$$
+\left[ \begin{array} {c} x^{'} \\ y^{'} \end{array} \right] =
+\left[ \begin{array}{cc} \cos{\phi} & \sin{\phi} \\
+-\sin{\phi} & \cos{\phi} \end{array} \right] 
+\left[ \begin{array} {c} x \\ y \end{array} \right]
+$$
+
+This can be written equivalently as
+
+$$
+\begin{align}
+x^{'} &= x \cos{\phi} + y \sin{\phi} \\
+y^{'} &= -x \sin{\phi} + y \cos{\phi}
+\end{align}
+$$
+
+Note that a slope of $\tilde{\beta}$ implies that the point $(1, \tilde{\beta})$ lies on the line $y = \tilde{\beta} x$. Then a rotation of this line yields
+
+$$
+\begin{align}
+x^{'} &= \cos{\phi} + \tilde{\beta} \sin{\phi} \\
+y^{'} &= -x \sin{\phi} + \tilde{\beta} \cos{\phi}
+\end{align}
+$$
+
+so that setting $x^{'} = 1$ implies
+
+$$
+\begin{align}
+x^{'} &= 1 \\
+\tilde{\beta}^{'} &= \frac{-\sin{\phi} + \tilde{\beta} \cos{\phi}}{\cos{\phi} + \tilde{\beta} \sin{\phi}}.
+\end{align}
+$$
+
+This gives us a closed form for the slope $\tilde{\beta}^{'} under rotation of the coordinate system. One can show that taking the derivative of $\tilde{\beta}^{'}$ with respect to $\tilde{\beta}$ yields
+
+$$
+\frac{d \tilde{\beta}^{'}}{d \tilde{\beta}} = 
+\frac{1}{(\cos{\phi} + \tilde{\beta} \sin{\phi})^2},
+$$
+
+In order to have $p(\tilde{\beta}) = p(\tilde{\beta}^{'})|d \tilde{\beta}^{'} / d \tilde{\beta}|$, one must have $(\cos{\phi} + \tilde{\beta} \sin{\phi})^2$ in the numerator of $p(\tilde{\beta}^{'})$. It is easy to see that this is only possible if
+
+$$
+p(\tilde{\beta}^{'}) \propto \frac{1}{\alpha + \tilde{\beta}^2},
+$$
+
+from which one can show that $\alpha = 1$, yielding the kernel of the Cauchy distribution. Notice that this is equivalent to putting a flat prior on the angle $\theta = arctan{\tilde{\beta}}$
+
+$$
+\begin{align}
+p(\theta) &\propto 1 \\
+p(\tilde{\beta}) &\propto p(\theta) |d \theta / d \beta| \\
+ &= \frac{1}{1 + \tilde{\beta}^2}.
+\end{align}
+$$
+
+Ultimately, Leonard derives the posterior distribution $p(\beta|y)$ as $\nu_0 \rightarrow 0$.
+
+[^1]: Samuelson, P. A. (1942). \A Note on Alternative Regressions." Econometrica, 10: 80-83.
+
+[^2]: Leonard, David. "Estimating a bivariate linear relationship." Bayesian Analysis 6.4 (2011): 727-754.
